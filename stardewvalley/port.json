@@ -1,0 +1,34 @@
+{
+    "version": 2,
+    "name": "stardewvalley.zip",
+    "items": [
+        "stardewvalley/",
+        "StardewValley.sh"
+    ],
+    "items_opt": null,
+    "attr": {
+        "title": "Stardew Valley Compatibility",
+        "porter": [
+            "Johnny on Flame"
+        ],
+        "desc": "Stardew Valley is an open-ended country-life RPG! You\u2019ve inherited your grandfather\u2019s old farm plot in Stardew Valley. Armed with hand-me-down tools and a few coins, you set out to begin your new life.",
+        "inst": "You must have an updated copy of the *compatibility version* of Stardew Valley. Both Steam or GOG versions are supported. https://www.stardewvalley.net/compatibility/\nCopy the retail game's data into the `stardewvalley/gamedata` folder.",
+        "genres": [
+            "rpg",
+            "simulation"
+        ],
+        "image": {},
+        "rtr": false,
+        "exp": false,
+        "runtime": [
+            "mono-6.12.0.122-aarch64.squashfs"
+        ],
+        "reqs": [],
+        "arch": [
+            "aarch64"
+        ],
+        "desc_md": null,
+        "inst_md": null,
+        "min_glibc": ""
+    }
+}
