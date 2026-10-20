@@ -58,7 +58,7 @@
 
 | 设置 | 作用 | 原因 |
 | --- | --- | --- |
-| `MONO_GC_PARAMS=nursery-size=8m` | 把 Mono 的年轻代从默认的 4 MB 提升到 8 MB | 减少游玩过程中的 GC 停顿，代价是约 4 MB 内存 |
+| `MONO_GC_PARAMS=nursery-size=12m` | 把 Mono 的年轻代从默认的 4 MB 提升到 12 MB | 减少游玩过程中的 GC 停顿，代价是额外占用约 8 MB 内存 |
 | `LIBGL_RECYCLEFBO=1` | 复用帧缓冲对象（FBO），而不是反复创建、销毁 | 减少光照与昼夜渲染目标带来的分配开销 |
 | `LIBGL_NOBANNER=1` | 隐藏 gl4es 的启动横幅 | 启动略快，`log.txt` 更干净 |
 | `MALLOC_ARENA_MAX=2` | 把 glibc 的 malloc arena 限制为 2 个 | 在 4 核掌机上降低常驻内存 |
@@ -176,3 +176,5 @@ AOT 生成的代码位于文件映射的共享库中，而不是匿名的 JIT �
 
 注意：从 PortMaster 重新安装该移植会覆盖 `StardewValley.sh`，
 如果你依赖自己的改动，请另存一份副本。
+
+> [协议](/LICENSE)只作用于我对项目做出的改动

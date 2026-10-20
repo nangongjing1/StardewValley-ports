@@ -1,23 +1,22 @@
 #!/bin/bash
 #
-# One-time AOT ("ahead of time") compilation of the Stardew Valley assemblies
-# for the Mono 6.12 runtime of this PortMaster port.
+# 一次性对本 PortMaster 移植版的《星露谷物语》程序集进行 AOT（"ahead of
+# time"，提前编译）编译，以适配 Mono 6.12 运行时。
 #
-# Modern Mono spends a large part of the startup and of the first minutes of
-# play compiling CIL to ARM64. AOT images move that work to a one-time step:
-# the code then lives in a file-backed .so next to the assembly instead of in
-# anonymous JIT memory, which is both faster to start and easier for the
-# kernel to reclaim under memory pressure.
+# 新版 Mono 会把启动过程以及游戏前几分钟里的大量时间花在把 CIL 编译成 ARM64
+# 上。AOT 镜像把这项工作挪到一次性步骤中完成：代码随后存在于程序集旁边的
+# 文件映射 .so 中，而不再是匿名的 JIT 内存，因此启动更快，在内存紧张时内核
+# 也更容易回收。
 #
-#   bash optimize.sh           compile what is missing or out of date
-#   bash optimize.sh --clean   delete every generated image again
+#   bash optimize.sh           编译缺失或已过期的内容
+#   bash optimize.sh --clean   删除所有已生成的镜像
 #
-# Output: <assembly>.dll.so / <assembly>.exe.so in gamedata/, plus aot.stamp.
-# Mono output goes to log.aot.txt, which also receives the result as a boolean
-# line, "precompiled=true" or "precompiled=false". StardewValley.sh reads the
-# last of those lines and only compiles again while it is not true.
+# 输出：gamedata/ 下的 <assembly>.dll.so / <assembly>.exe.so，以及 aot.stamp。
+# Mono 的输出写入 log.aot.txt，其中还会以布尔值行的形式记录结果：
+# "precompiled=true" 或 "precompiled=false"。StardewValley.sh 会读取最后
+# 一行这样的记录，只有在其不为 true 时才会再次编译。
 #
-# It is safe to run more than once; only stale images are rebuilt.
+# 重复运行是安全的；只会重建过期的镜像。
 
 PORT_DIR=$(cd "$(dirname "$0")" && pwd)
 GAMEDATA="$PORT_DIR/gamedata"
@@ -26,14 +25,13 @@ LOG="$PORT_DIR/log.aot.txt"
 
 ESUDO=${ESUDO:-}
 
-# Mono can abort on assemblies it cannot compile; a core file of the runtime
-# would be hundreds of megabytes on the SD card.
+# Mono 在无法编译的程序集上可能直接中止；运行时产生的核心转储文件在 SD 卡
+# 上会有数百 MB。
 ulimit -c 0 2>/dev/null || true
 
-# The launcher treats the last "precompiled=" line of the log as the truth: a
-# missing line or false means the next start tries again. The false marker is
-# also written before the work starts, so an interrupted or crashed run is
-# never mistaken for a finished one.
+# 启动脚本把日志中最后一行的 "precompiled=" 当作真实状态：缺少该行或为 false
+# 都表示下次启动会再次尝试。false 标记也会在工作开始前写入，因此被中断或
+# 崩溃的运行不会被误认为已经完成。
 record_result() {
 	printf 'precompiled=%s\n' "$1" >> "$LOG"
 }
@@ -76,8 +74,8 @@ if [ "$1" = "--clean" ]; then
 	exit 0
 fi
 
-# A failing run prints the loader error for every method it cannot compile, so
-# keep only the current attempt in the log and the previous one for reference.
+# 运行失败时，加载器会为每个无法编译的方法打印错误，因此日志中只保留本次
+# 尝试，另留上一次作为参考。
 if [ -f "$LOG" ]; then
 	mv -f "$LOG" "$LOG.1" 2>/dev/null
 fi
@@ -89,9 +87,9 @@ if [ ! -d "$GAMEDATA" ]; then
 	fail "ERROR: $GAMEDATA not found."
 fi
 
-# Locate PortMaster's control files so we can reuse its privilege helper and
-# find the Mono squashfs. When started from StardewValley.sh the environment is
-# already set up; when started over SSH/frontend we source control.txt here.
+# 定位 PortMaster 的控制文件，以便复用其提权辅助脚本并找到 Mono 的 squashfs。
+# 从 StardewValley.sh 启动时环境已配置好；通过 SSH/前端启动时则在此处加载
+# control.txt。
 XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
 if [ -d "/opt/system/Tools/PortMaster/" ]; then
 	controlfolder="/opt/system/Tools/PortMaster"
@@ -126,20 +124,19 @@ if [ ! -x "$MONO" ]; then
 fi
 
 if [ -z "$MONO" ] || [ ! -x "$MONO" ]; then
-	# Not a permanent failure: the runtime squashfs is only mounted while the
-	# game runs, so leave no stamp and let the next launch try again.
+	# 并非永久性失败：运行时 squashfs 只在游戏运行时才挂载，因此不写标记，
+	# 让下次启动再试一次。
 	record_error "mono-missing:$monodir"
 	say "ERROR: Mono runtime not found in $monodir/bin or PATH."
 	say "Start the game once so PortMaster mounts it, then run this again."
 	exit 1
 fi
 
-# PortMaster's Mono runtime carries the assembler and linker used by AOT next
-# to bin/mono, and their support libraries (libbfd, libopcodes) in the sibling
-# lib/ directory. That directory is not part of the default library search path,
-# so as/ld would fail to start even when they are present; make both visible
-# before looking for them. Resolve symlinks so the runtime root is right when
-# mono is a link.
+# PortMaster 的 Mono 运行时把 AOT 所用的汇编器和链接器放在 bin/mono 旁边，
+# 并把它们的支撑库（libbfd、libopcodes）放在同级的 lib/ 目录中。该目录不在
+# 默认的库搜索路径里，因此即使文件存在，as/ld 也会启动失败；在查找它们之前
+# 先将两者加入搜索路径。解析符号链接，以便在 mono 是链接时得到正确的运行时
+# 根目录。
 mono_real=$(readlink -f "$MONO" 2>/dev/null)
 [ -n "$mono_real" ] || mono_real="$MONO"
 mono_bin_dir=$(dirname "$mono_real")
@@ -179,7 +176,7 @@ find_binutil() {
 			return 0
 		fi
 	done
-	# Last resort: a runtime that keeps its toolchain in a subdirectory.
+	# 最后的尝试：某些运行时会把工具链放在子目录里。
 	if [ "$mono_root" != "/" ]; then
 		find "$mono_root" -maxdepth 4 -type f -name "$name" 2>/dev/null | while IFS= read -r candidate; do
 			if [ -x "$candidate" ]; then
@@ -213,8 +210,8 @@ if [ -z "$as_bin" ] || [ -z "$ld_bin" ]; then
 	exit 1
 fi
 
-# Mono runs the tools by name, so their directories have to come first, and
-# their own support libraries are looked for next to them.
+# Mono 是按名称调用这些工具的，因此它们的目录必须排在最前面，而其自身的
+# 支撑库则在它们旁边查找。
 as_dir=$(dirname "$as_bin")
 ld_dir=$(dirname "$ld_bin")
 export PATH="$as_dir:$ld_dir:$PATH"
@@ -242,14 +239,13 @@ esac
 
 export MONO_PATH="$PORT_DIR/dlls:$GAMEDATA"
 
-# The Windows build references XNA 4.0 (Microsoft.Xna.Framework*), which the
-# port only substitutes at runtime: SVLoader relinks those references to
-# MonoGame. AOT resolves references while compiling, so it needs assemblies with
-# those names. Mono does not verify the assembly identity behind a file name
-# (strict name checking is off by default), and MonoGame is version 0.0.0.0 and
-# unsigned, so copies of MonoGame under the XNA names resolve every reference to
-# exactly the code the game binds to at runtime - same types, same layouts.
-# These copies are only in MONO_PATH while compiling; the game never sees them.
+# Windows 版本引用的是 XNA 4.0（Microsoft.Xna.Framework*），而移植版只在运行时
+# 才替换这些引用：SVLoader 会把它们重定向到 MonoGame。AOT 在编译时就要解析
+# 引用，因此需要有这些名称的程序集。Mono 不校验文件名背后的程序集标识（严格
+# 名称检查默认关闭），而 MonoGame 的版本为 0.0.0.0 且未签名，所以用 XNA 的
+# 名称复制一份 MonoGame，就能让每个引用解析到游戏运行时实际绑定的同一份代码
+# ——类型相同、布局相同。
+# 这些副本只在编译期间出现在 MONO_PATH 中；游戏本身永远不会看到它们。
 aot_shims="$PORT_DIR/aot-shims"
 monogame="$PORT_DIR/dlls/MonoGame.Framework.dll"
 if [ -f "$monogame" ]; then
@@ -263,7 +259,7 @@ if [ -f "$monogame" ]; then
 	printf 'shims=%s\n' "$aot_shims" >> "$LOG"
 fi
 
-# Extra reference assemblies supplied by hand take precedence over the shims.
+# 手工提供的额外引用程序集优先于 shim。
 aot_refs=
 [ -d "$PORT_DIR/aot-refs" ] && aot_refs="$PORT_DIR/aot-refs"
 [ -d "$aot_shims" ] && aot_refs="${aot_refs:+$aot_refs:}$aot_shims"
@@ -279,7 +275,7 @@ mono_version=$("$MONO" --version 2>/dev/null | head -n1)
 say "Mono: $mono_version"
 printf 'mono=%s\n' "$mono_version" >> "$LOG"
 
-# Images built by a different runtime cannot be reused.
+# 由不同运行时生成的镜像无法复用。
 force=0
 if [ -f "$STAMP" ]; then
 	prev_mono=$(sed -n 's/^mono=//p' "$STAMP" | head -n1)
@@ -301,8 +297,8 @@ compile_one() {
 	name=$(basename "$assembly")
 	image="$assembly.so"
 
-	# FAT/SD cards only store timestamps to the second, so treat "not newer"
-	# as current instead of requiring a strictly newer image.
+	# FAT/SD 卡的时间戳只精确到秒，因此把 "不比镜像新" 也视为最新，
+	# 而不要求镜像严格更新。
 	if [ "$force" = "0" ] && [ -f "$image" ] && [ ! "$assembly" -nt "$image" ]; then
 		say "current:   $name"
 		return 0
@@ -327,10 +323,9 @@ for assembly in "$GAMEDATA"/*.exe "$GAMEDATA"/*.dll; do
 	compile_one "$assembly"
 done
 
-# The game assembly is the image that has to be there for AOT to be worth
-# anything: if it compiled, the toolchain works and Mono picks the images up on
-# the next start. Files that are not managed assemblies (steam_api.dll and
-# friends) are skipped by design and do not count as a failure.
+# 游戏程序集是决定 AOT 是否有价值的镜像：如果它编译成功，说明工具链可用，
+# Mono 会在下次启动时加载这些镜像。非托管程序集（steam_api.dll 之类）按设计
+# 会被跳过，不计为失败。
 gameassembly=
 for candidate in "Stardew Valley.exe" "StardewValley.exe"; do
 	if [ -f "$GAMEDATA/$candidate" ]; then
@@ -354,9 +349,9 @@ elif [ -s "$GAMEDATA/$gameassembly.so" ]; then
 	aot_status=ok
 	aot_reason=ready
 elif [ "$missing_refs" = "1" ]; then
-	# Deterministic: the game assembly references assemblies the port only
-	# substitutes at runtime, so no amount of retrying produces its image.
-	# The support assemblies are compiled, which is all this device can get.
+	# 这是确定性的：游戏程序集引用了移植版只在运行时替换的程序集，无论
+	# 重试多少次都无法生成它的镜像。
+	# 支撑程序集仍会编译，这已是该设备能得到的全部。
 	aot_result=partial
 	aot_status=partial
 	aot_reason=missing-xna-refs
