@@ -34,10 +34,15 @@ echo "Loading... Please Wait." > /dev/tty0
 # stardewvalley.md 的 "Performance"（性能）一节。
 # ---------------------------------------------------------------------------
 
-# Mono 的 SGen GC。默认 nursery 为 4m：加大后可以减少走动时的回收次数。
-# 可选附加项（见 stardewvalley.md）：追加 ",minor=simple-par"，让每次回收
-# 分摊到多个核心上执行。
-export MONO_GC_PARAMS="${MONO_GC_PARAMS:-nursery-size=12m}"
+# Mono 的 SGen GC。nursery 必须正好是 2 的整数次幂（4m、8m、16m……）。
+# 加大 nursery 可以减少回收次数，也让更多短命对象在年轻代里直接死掉、不必
+# 晋升到老年代，代价是常驻内存增加。
+#
+# ",minor=simple-par" 让年轻代回收分摊到多个核心上执行，但它只在 nursery
+# 达到 16m 时才真正生效（Mono 的 SGEN_PARALLEL_MINOR_MIN_NURSERY_SIZE =
+# 1 << 24），所以这里必须配 16m；写 8m 再加这个选项是空转。
+# 想省内存就退回 nursery-size=8m 并去掉该项，回收会变回单线程。
+export MONO_GC_PARAMS="${MONO_GC_PARAMS:-nursery-size=16m,minor=simple-par}"
 
 # gl4es：复用帧缓冲对象而不是重新分配，并跳过启动横幅。
 export LIBGL_RECYCLEFBO="${LIBGL_RECYCLEFBO:-1}"
@@ -45,6 +50,12 @@ export LIBGL_NOBANNER="${LIBGL_NOBANNER:-1}"
 
 # glibc：每个线程一个 malloc arena 会在这类设备上造成堆碎片。
 export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"
+
+# glibc：把"大块内存走 mmap、释放即归还内核"和"收缩堆顶"的阈值固定在 128 KB。
+# 这两个变量一旦由环境给出，glibc 在运行期的动态调整就关闭了；否则它会把
+# 阈值一路抬到 32 MB，加载阶段那些临时大缓冲区就一直留在堆里不还给系统。
+export MALLOC_MMAP_THRESHOLD_="${MALLOC_MMAP_THRESHOLD_:-131072}"
+export MALLOC_TRIM_THRESHOLD_="${MALLOC_TRIM_THRESHOLD_:-131072}"
 
 # OpenAL Soft：本移植版使用 ALSA。显式指定驱动可以免去对当前并未运行的
 # PipeWire/PulseAudio 后端的探测（以及等待）。
@@ -228,7 +239,8 @@ fi
 aot_result=$(aot_last precompiled)
 [ -n "$aot_result" ] || aot_result=none
 
-# 内存曲线采样：SDV_MEMLOG=1 会在 log.txt 旁写入 log.mem.txt
+# 内存曲线采样：SDV_MEMLOG=1 会在 log.txt 旁写入 log.mem.txt，
+# 每行是"时间戳 当前 RSS(kB) 峰值 RSS(kB)"，游戏退出后峰值会追加到 log.txt。
 start_memlog() {
 	local memlog="${gamedir}/log.mem.txt"
 	local pid=
@@ -241,7 +253,11 @@ start_memlog() {
 			sleep 2
 		done
 		while [ -n "$pid" ] && [ -r "/proc/$pid/status" ]; do
-			awk -v t="$(date +%s)" '/^VmRSS:/ { print t, $2 }' "/proc/$pid/status" 2>/dev/null >> "$memlog"
+			awk -v t="$(date +%s)" '
+				/^VmRSS:/ { rss = $2 }
+				/^VmHWM:/ { hwm = $2 }
+				END { if (rss) print t, rss, hwm }
+			' "/proc/$pid/status" 2>/dev/null >> "$memlog"
 			sleep 5
 		done
 	) &
@@ -252,18 +268,26 @@ start_ts=$(date +%s)
 {
 	echo "=== Stardew Valley port $(date '+%Y-%m-%d %H:%M:%S') ==="
 	echo "tuning: MONO_GC_PARAMS=${MONO_GC_PARAMS} MALLOC_ARENA_MAX=${MALLOC_ARENA_MAX}"
+	echo "tuning: MALLOC_MMAP_THRESHOLD_=${MALLOC_MMAP_THRESHOLD_} MALLOC_TRIM_THRESHOLD_=${MALLOC_TRIM_THRESHOLD_}"
 	echo "tuning: LIBGL_RECYCLEFBO=${LIBGL_RECYCLEFBO} ALSOFT_DRIVERS=${ALSOFT_DRIVERS}"
 	echo "aot: precompiled=$aot_result stale=$aot_stale images=$(ls -1 "$gamedir/gamedata/"*.so 2>/dev/null | wc -l)"
 	echo "--- game output ---"
 } > "$log"
 
+memlog_started=0
 if [ -n "${SDV_MEMLOG:-}" ] && command -v pgrep > /dev/null 2>&1; then
 	start_memlog
+	memlog_started=1
 fi
 
 $GPTOKEYB "mono" &
 $TASKSET mono ../SVLoader.exe "${gameassembly}" 2>&1 | tee -a "$log"
 echo "--- session length: $(( $(date +%s) - start_ts ))s ---" >> "$log"
+if [ "$memlog_started" = "1" ] && [ -s "$gamedir/log.mem.txt" ]; then
+	awk '{ if ($3 + 0 > peak) peak = $3 + 0 }
+		END { if (peak) printf "--- peak RSS: %d MB ---\n", peak / 1024 }' \
+		"$gamedir/log.mem.txt" >> "$log"
+fi
 $ESUDO kill -9 $(pidof gptokeyb)
 $ESUDO systemctl restart oga_events &
 $ESUDO umount "$monodir"
